@@ -1,0 +1,14 @@
+{
+  "name": "flux-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:desktop": "npm run dev --workspace=flux-desktop",
+    "build:desktop": "npm run build --workspace=flux-desktop",
+    "tauri": "npm run tauri --workspace=flux-desktop --"
+  }
+}

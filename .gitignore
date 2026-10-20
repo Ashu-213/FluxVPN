@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Rust build outputs
+**/target/
+**/gen/schemas/
+
+# Frontend build outputs
+dist/
+dist-ssr/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.conf
+!*.conf.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
