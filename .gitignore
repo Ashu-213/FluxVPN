@@ -19,6 +19,11 @@ dist-ssr/
 *.key
 *.conf
 !*.conf.example
+*privatekey*
+*presharedkey*
+infra/server/local-wireguard/config/
+infra/server/local-wireguard/config-*/
+
 
 # Logs
 logs/

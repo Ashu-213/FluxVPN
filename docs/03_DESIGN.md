@@ -29,7 +29,32 @@ Only the native tunnel adapter is authoritative for tunnel state. The UI must no
 
 All commands should be validated and narrowly scoped. Do not expose arbitrary shell execution from the UI or API.
 
-## 3. Configuration and credentials
+## 3. Desktop Dashboard Layout & Component Architecture
+The FLUX desktop UI employs a cinematic, monochromatic layout built upon the Obsidian & Gold design system (`#000000` canvas with `#FFC000` primary CTA):
+
+1. **Header Navigation:**
+   - Displays official FLUX brand glyph and uppercase wordmark.
+   - Houses technical mode indicator (`SIMULATED` / `MOCK ENGINE`).
+   - Restrained `DIAGNOSTICS` trigger button.
+2. **Status Stage:**
+   - Authoritative uppercase status headline (`DISCONNECTED`, `CONNECTING`, `CONNECTED`, etc.).
+   - Geometric square status indicator and uppercase microcopy subtitle.
+3. **Primary Action Area:**
+   - Prominent, sharp rectangular Connect CTA button in solid Gold (`#FFC000`) with black text.
+   - Disconnect state rendered as an angular Dark Iron (`#181818`) container with hover alert.
+4. **Relay Endpoint Selector:**
+   - Sharp rectangular surface card displaying country code block, relay city, and real-time latency ping.
+   - Expandable dropdown for server selection (Frankfurt, Mumbai, Singapore).
+5. **Live Telemetry Strip:**
+   - Active when in `connected` state.
+   - 3-column monospace grid displaying Session Duration, Download rate, and Upload rate.
+6. **Sanitized Diagnostics Modal:**
+   - Overlay presenting technical environment parameters, active relay, and zero exposed credentials.
+   - One-click sanitized report clipboard copy.
+7. **Developer State Drawer:**
+   - Discreet, collapsible bottom drawer providing instant state transitions for rapid UI validation.
+
+## 4. Configuration and credentials
 - Generate device keys locally when supported by the chosen integration.
 - Keep private keys on the device and protect local storage using operating-system facilities.
 - Send only the public key and minimum device metadata to the control plane when needed.
@@ -37,7 +62,7 @@ All commands should be validated and narrowly scoped. Do not expose arbitrary sh
 - Never log private keys, access tokens, OTPs, or complete VPN configuration.
 - Provide a revocation procedure and document how it affects existing tunnels.
 
-## 4. Optional API (only if accounts/devices are required)
+## 5. Optional API (only if accounts/devices are required)
 
 Proposed endpoints:
 - `POST /api/v1/auth/login` — authenticate using the chosen provider.
@@ -50,7 +75,7 @@ Proposed endpoints:
 
 These are proposed routes, not implemented APIs. Enforce user/device ownership and authorization on every request. Do not expose privileged server commands through client-facing endpoints.
 
-## 5. Server configuration principles
+## 6. Server configuration principles
 - Use a unique peer identity per device.
 - Assign addresses without overlap and manage them centrally.
 - Apply least-privilege firewall rules.
@@ -59,10 +84,10 @@ These are proposed routes, not implemented APIs. Enforce user/device ownership a
 - Back up only what is needed, encrypt backups, and test restoration.
 - Document peer removal and key rotation.
 
-## 6. Optional subscription entitlement model
+## 7. Optional subscription entitlement model
 If the product becomes paid, define one shared entitlement rule used by provisioning and revocation. Explicitly test active, expired, cancelled-at-period-end, failed renewal, refund, suspended account, and revoked device states. Payment webhook processing must verify signatures and be idempotent.
 
-## 7. Errors
+## 8. Errors
 Return user-safe errors with a request ID. Keep detailed diagnostics in protected logs without secrets or browsing history. Example codes:
 - `AUTH_REQUIRED`
 - `DEVICE_REVOKED`
