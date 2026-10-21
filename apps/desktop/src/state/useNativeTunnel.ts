@@ -37,9 +37,9 @@ export function useNativeTunnel(): UseNativeTunnelResult {
   const isQueryingRef = useRef<boolean>(false);
   const isMountedRef = useRef<boolean>(true);
 
-  const fetchStatus = useCallback(async () => {
-    // Prevent overlapping queries
-    if (isQueryingRef.current) return;
+  const fetchStatus = useCallback(async (force = false) => {
+    // Prevent overlapping queries unless manually forced by a lifecycle action
+    if (isQueryingRef.current && !force) return;
 
     isQueryingRef.current = true;
     const currentSeq = ++requestSeqRef.current;
@@ -137,6 +137,6 @@ export function useNativeTunnel(): UseNativeTunnelResult {
     isLoading,
     queryError,
     lastChecked,
-    refresh: fetchStatus,
+    refresh: () => fetchStatus(true),
   };
 }

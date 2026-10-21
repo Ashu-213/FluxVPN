@@ -70,7 +70,7 @@ export const ConnectButton: React.FC<ConnectButtonProps> = ({ state, onToggle })
 
       {/* Subtle context note */}
       <span className="text-[10px] font-mono tracking-widest uppercase text-[#7D7D7D] mt-3">
-        {isConnected ? "ACTIVE SESSION ENCRYPTED" : "ENCRYPTED WIREGUARD TUNNEL"}
+        {isConnected ? "TUNNEL SERVICE ACTIVE" : "WIREGUARD TUNNEL"}
       </span>
     </div>
   );

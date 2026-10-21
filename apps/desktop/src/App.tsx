@@ -34,7 +34,11 @@ export const App: React.FC = () => {
     lastOperation,
     toggleConnection,
     simulateState,
-  } = useVpn({ onServiceAction: refresh });
+  } = useVpn({
+    onServiceAction: refresh,
+    nativeServiceState: nativeReport?.state,
+    verificationState: verificationReport?.state,
+  });
 
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
 

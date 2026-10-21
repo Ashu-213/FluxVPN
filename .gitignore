@@ -23,6 +23,7 @@ dist-ssr/
 *presharedkey*
 infra/server/local-wireguard/config/
 infra/server/local-wireguard/config-*/
+infra/client/local-wireguard/
 
 
 # Logs

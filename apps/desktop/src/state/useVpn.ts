@@ -6,6 +6,8 @@ import {
   VpnMetrics,
   ErrorCode,
   TunnelOperationResult,
+  NativeServiceState,
+  VerificationState,
 } from "../types/vpn";
 
 export const MOCK_SERVERS: ServerInfo[] = [
@@ -35,7 +37,11 @@ export const MOCK_SERVERS: ServerInfo[] = [
   },
 ];
 
-export function getMicrocopy(state: ConnectionState, errorCode?: ErrorCode): { title: string; subtitle: string } {
+export function getMicrocopy(
+  state: ConnectionState,
+  errorCode?: ErrorCode,
+  verificationState?: VerificationState
+): { title: string; subtitle: string } {
   switch (state) {
     case "disconnected":
       return {
@@ -53,9 +59,21 @@ export function getMicrocopy(state: ConnectionState, errorCode?: ErrorCode): { t
         subtitle: "Dispatching start signal to WireGuard service…",
       };
     case "connected":
+      if (verificationState === "trafficObserved") {
+        return {
+          title: "Connected",
+          subtitle: "Protected · Bidirectional traffic active",
+        };
+      }
+      if (verificationState === "handshakeVerified") {
+        return {
+          title: "Handshake Verified",
+          subtitle: "Tunnel active · Cryptographic handshake verified",
+        };
+      }
       return {
-        title: "Connected",
-        subtitle: "Tunnel active · All traffic encrypted",
+        title: "Tunnel Running",
+        subtitle: "Tunnel service active · Handshake pending",
       };
     case "reconnecting":
       return {
@@ -101,6 +119,8 @@ export function getMicrocopy(state: ConnectionState, errorCode?: ErrorCode): { t
 
 interface UseVpnOptions {
   onServiceAction?: () => Promise<void> | void;
+  nativeServiceState?: NativeServiceState;
+  verificationState?: VerificationState;
 }
 
 export function useVpn(options?: UseVpnOptions) {
@@ -121,13 +141,54 @@ export function useVpn(options?: UseVpnOptions) {
 
   const isOperatingRef = useRef<boolean>(false);
   const metricsTimerRef = useRef<number | null>(null);
+  const connectingTimeoutRef = useRef<number | null>(null);
+  const hasUserDisconnectedRef = useRef<boolean>(false);
 
   // Clear timers on unmount
   useEffect(() => {
     return () => {
       if (metricsTimerRef.current) window.clearInterval(metricsTimerRef.current);
+      if (connectingTimeoutRef.current) window.clearTimeout(connectingTimeoutRef.current);
     };
   }, []);
+
+  // Synchronize UI session state with real native Windows service state
+  useEffect(() => {
+    const nativeState = options?.nativeServiceState;
+    if (!nativeState) return;
+
+    if (nativeState === "running") {
+      if (state === "connecting" || state === "preparing") {
+        setState("connected");
+        setErrorCode(undefined);
+        setCustomErrorMessage(null);
+        if (connectingTimeoutRef.current) {
+          clearTimeout(connectingTimeoutRef.current);
+          connectingTimeoutRef.current = null;
+        }
+      } else if (state === "disconnected" && !hasUserDisconnectedRef.current && !isOperatingRef.current) {
+        // Service was already running when app opened
+        setState("connected");
+      }
+    } else if (nativeState === "stopped") {
+      if (state === "connected" || state === "disconnecting") {
+        setState("disconnected");
+        setErrorCode(undefined);
+        setCustomErrorMessage(null);
+      }
+    } else if (nativeState === "notInstalled") {
+      if (state === "connected") {
+        setState("error");
+        setErrorCode("SERVICE_NOT_INSTALLED");
+        setCustomErrorMessage("Tunnel service was uninstalled from Windows Service Control Manager.");
+      }
+    } else if (nativeState === "accessDenied") {
+      if (state === "connected" || state === "connecting") {
+        setState("error");
+        setErrorCode("TUNNEL_PERMISSION_DENIED");
+      }
+    }
+  }, [options?.nativeServiceState, state]);
 
   // Update session duration when connected (throughput is marked standby until native driver telemetry is bound)
   useEffect(() => {
@@ -168,9 +229,15 @@ export function useVpn(options?: UseVpnOptions) {
     if (state === "connecting" || state === "connected" || state === "preparing") return;
 
     isOperatingRef.current = true;
+    hasUserDisconnectedRef.current = false;
     setErrorCode(undefined);
     setCustomErrorMessage(null);
     setState("preparing");
+
+    if (connectingTimeoutRef.current) {
+      clearTimeout(connectingTimeoutRef.current);
+      connectingTimeoutRef.current = null;
+    }
 
     try {
       // Invoke native start_tunnel command with strictly fixed tunnel name "flux"
@@ -202,8 +269,22 @@ export function useVpn(options?: UseVpnOptions) {
         return;
       }
 
-      // Native service start requested successfully
-      setState("connecting");
+      // If service is already reported running, transition immediately; otherwise await observer with timeout
+      if (result.state === "running") {
+        setState("connected");
+      } else {
+        setState("connecting");
+        connectingTimeoutRef.current = window.setTimeout(() => {
+          setState((curr) => {
+            if (curr === "connecting") {
+              setErrorCode("TUNNEL_START_FAILED");
+              setCustomErrorMessage("Tunnel service start timed out awaiting Windows SCM.");
+              return "error";
+            }
+            return curr;
+          });
+        }, 15000);
+      }
     } catch (err: unknown) {
       setState("error");
       setErrorCode("TUNNEL_START_FAILED");
@@ -219,7 +300,13 @@ export function useVpn(options?: UseVpnOptions) {
     if (state === "disconnected" || state === "disconnecting") return;
 
     isOperatingRef.current = true;
+    hasUserDisconnectedRef.current = true;
     setState("disconnecting");
+
+    if (connectingTimeoutRef.current) {
+      clearTimeout(connectingTimeoutRef.current);
+      connectingTimeoutRef.current = null;
+    }
 
     try {
       // Invoke native stop_tunnel command with strictly fixed tunnel name "flux"
@@ -273,7 +360,7 @@ export function useVpn(options?: UseVpnOptions) {
     if (customMsg) setCustomErrorMessage(customMsg);
   }, []);
 
-  const microcopy = getMicrocopy(state, errorCode);
+  const microcopy = getMicrocopy(state, errorCode, options?.verificationState);
 
   return {
     state,
