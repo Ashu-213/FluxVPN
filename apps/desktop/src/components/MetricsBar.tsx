@@ -1,8 +1,9 @@
 import React from "react";
-import { VpnMetrics } from "../types/vpn";
+import { TunnelTelemetry, VpnMetrics } from "../types/vpn";
 
 interface MetricsBarProps {
   metrics: VpnMetrics;
+  telemetry?: TunnelTelemetry | null;
 }
 
 function formatDuration(sec: number): string {
@@ -15,47 +16,49 @@ function formatDuration(sec: number): string {
   return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
 }
 
-export const MetricsBar: React.FC<MetricsBarProps> = ({ metrics }) => {
-  const isReal = metrics.isRealTelemetry === true;
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+export const MetricsBar: React.FC<MetricsBarProps> = ({ metrics, telemetry }) => {
+  const hasRealTraffic = telemetry && (telemetry.rxBytes > 0 || telemetry.txBytes > 0);
 
   return (
     <div className="w-full max-w-sm mx-auto px-6 mt-4">
       <div className="grid grid-cols-3 border border-[#202020] bg-[#181818]">
-        {/* Session Duration */}
+        {/* Session Duration / Handshake Age */}
         <div className="flex flex-col p-3 border-r border-[#202020] text-center">
           <span className="text-[9px] font-mono tracking-[0.2em] uppercase text-[#7D7D7D]">
-            DURATION
+            {telemetry?.handshakeAgeSeconds != null ? "HANDSHAKE" : "DURATION"}
           </span>
           <span className="text-xs font-mono font-bold text-[#FFFFFF] mt-1">
-            {formatDuration(metrics.connectedDurationSec)}
+            {telemetry?.handshakeAgeSeconds != null
+              ? `${telemetry.handshakeAgeSeconds}S AGO`
+              : formatDuration(metrics.connectedDurationSec)}
           </span>
         </div>
 
-        {/* Download Rate */}
+        {/* Received / Download */}
         <div className="flex flex-col p-3 border-r border-[#202020] text-center">
           <span className="text-[9px] font-mono tracking-[0.2em] uppercase text-[#7D7D7D]">
-            DOWNLOAD
+            RX TRAFFIC
           </span>
           <span className="text-xs font-mono font-bold text-[#FFCE3E] mt-1">
-            {isReal
-              ? metrics.currentDownloadKbps > 1024
-                ? `${(metrics.currentDownloadKbps / 1024).toFixed(1)} MB/S`
-                : `${metrics.currentDownloadKbps} KB/S`
-              : "-- (STANDBY)"}
+            {hasRealTraffic ? formatBytes(telemetry.rxBytes) : "-- (STANDBY)"}
           </span>
         </div>
 
-        {/* Upload Rate */}
+        {/* Transmitted / Upload */}
         <div className="flex flex-col p-3 text-center">
           <span className="text-[9px] font-mono tracking-[0.2em] uppercase text-[#7D7D7D]">
-            UPLOAD
+            TX TRAFFIC
           </span>
           <span className="text-xs font-mono font-bold text-[#FFFFFF] mt-1">
-            {isReal
-              ? metrics.currentUploadKbps > 1024
-                ? `${(metrics.currentUploadKbps / 1024).toFixed(1)} MB/S`
-                : `${metrics.currentUploadKbps} KB/S`
-              : "-- (STANDBY)"}
+            {hasRealTraffic ? formatBytes(telemetry.txBytes) : "-- (STANDBY)"}
           </span>
         </div>
       </div>

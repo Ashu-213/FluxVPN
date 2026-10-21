@@ -4,6 +4,10 @@ import {
   TunnelStatusReport,
   FormattedServiceState,
   formatNativeServiceState,
+  TunnelVerificationReport,
+  FormattedVerificationState,
+  formatVerificationState,
+  TunnelTelemetry,
 } from "../types/vpn";
 
 const FIXED_FLUX_TUNNEL_NAME = "flux";
@@ -12,6 +16,9 @@ const POLL_INTERVAL_MS = 3000;
 export interface UseNativeTunnelResult {
   report: TunnelStatusReport | null;
   formattedState: FormattedServiceState;
+  verificationReport: TunnelVerificationReport | null;
+  formattedVerification: FormattedVerificationState;
+  telemetry: TunnelTelemetry | null;
   isLoading: boolean;
   queryError: string | null;
   lastChecked: Date | null;
@@ -20,6 +27,7 @@ export interface UseNativeTunnelResult {
 
 export function useNativeTunnel(): UseNativeTunnelResult {
   const [report, setReport] = useState<TunnelStatusReport | null>(null);
+  const [verificationReport, setVerificationReport] = useState<TunnelVerificationReport | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
@@ -37,17 +45,23 @@ export function useNativeTunnel(): UseNativeTunnelResult {
     const currentSeq = ++requestSeqRef.current;
 
     try {
-      // Invoke Tauri command with strictly hardcoded tunnel name
-      const result = await invoke<TunnelStatusReport>("get_tunnel_status", {
-        tunnelName: FIXED_FLUX_TUNNEL_NAME,
-      });
+      // Invoke native status and verification queries concurrently
+      const [serviceResult, verifyResult] = await Promise.all([
+        invoke<TunnelStatusReport>("get_tunnel_status", {
+          tunnelName: FIXED_FLUX_TUNNEL_NAME,
+        }),
+        invoke<TunnelVerificationReport>("verify_tunnel_connectivity", {
+          tunnelName: FIXED_FLUX_TUNNEL_NAME,
+        }),
+      ]);
 
       // Ignore stale responses if a newer request was dispatched or component unmounted
       if (!isMountedRef.current || currentSeq !== requestSeqRef.current) {
         return;
       }
 
-      setReport(result);
+      setReport(serviceResult);
+      setVerificationReport(verifyResult);
       setQueryError(null);
       setLastChecked(new Date());
     } catch (err: unknown) {
@@ -88,7 +102,7 @@ export function useNativeTunnel(): UseNativeTunnelResult {
     };
   }, [fetchStatus]);
 
-  // Derived formatted state
+  // Derived formatted state for service
   const formattedState: FormattedServiceState = report
     ? formatNativeServiceState(report.state)
     : queryError
@@ -105,9 +119,21 @@ export function useNativeTunnel(): UseNativeTunnelResult {
         isRunning: false,
       };
 
+  // Derived formatted state for handshake / traffic verification
+  const formattedVerification: FormattedVerificationState = verificationReport
+    ? formatVerificationState(verificationReport.state)
+    : {
+        label: "CHECKING...",
+        tone: "warning",
+        isVerified: false,
+      };
+
   return {
     report,
     formattedState,
+    verificationReport,
+    formattedVerification,
+    telemetry: verificationReport?.telemetry || null,
     isLoading,
     queryError,
     lastChecked,

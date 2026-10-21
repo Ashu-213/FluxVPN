@@ -13,6 +13,7 @@ export type ErrorCode =
   | "SERVER_UNAVAILABLE"
   | "TUNNEL_PERMISSION_DENIED"
   | "TUNNEL_START_FAILED"
+  | "SERVICE_NOT_INSTALLED"
   | "DNS_CONFIGURATION_FAILED"
   | "CONFIGURATION_INVALID";
 
@@ -60,6 +61,15 @@ export interface TunnelStatusReport {
   errorMessage: string | null;
 }
 
+export interface TunnelOperationResult {
+  success: boolean;
+  tunnelName: string;
+  serviceName: string;
+  state: NativeServiceState;
+  errorCode: string | null;
+  message: string;
+}
+
 export type NativeServiceTone = "positive" | "warning" | "neutral" | "danger";
 
 export interface FormattedServiceState {
@@ -90,4 +100,53 @@ export function formatNativeServiceState(state: NativeServiceState): FormattedSe
     return { label: `UNKNOWN (${state.unknown})`, tone: "warning", isInstalled: false, isRunning: false };
   }
   return { label: "UNKNOWN", tone: "warning", isInstalled: false, isRunning: false };
+}
+
+export type VerificationState =
+  | "serviceStopped"
+  | "noHandshake"
+  | "handshakeVerified"
+  | "trafficObserved"
+  | "unavailable"
+  | "permissionDenied"
+  | "queryFailed";
+
+export interface TunnelTelemetry {
+  lastHandshakeEpochSec: number | null;
+  handshakeAgeSeconds: number | null;
+  rxBytes: number;
+  txBytes: number;
+}
+
+export interface TunnelVerificationReport {
+  tunnelName: string;
+  state: VerificationState;
+  telemetry: TunnelTelemetry | null;
+  errorMessage: string | null;
+}
+
+export interface FormattedVerificationState {
+  label: string;
+  tone: NativeServiceTone;
+  isVerified: boolean;
+}
+
+export function formatVerificationState(state: VerificationState): FormattedVerificationState {
+  switch (state) {
+    case "trafficObserved":
+      return { label: "TRAFFIC ACTIVE", tone: "positive", isVerified: true };
+    case "handshakeVerified":
+      return { label: "HANDSHAKE VERIFIED", tone: "positive", isVerified: true };
+    case "noHandshake":
+      return { label: "NO HANDSHAKE", tone: "warning", isVerified: false };
+    case "serviceStopped":
+      return { label: "SERVICE STOPPED", tone: "neutral", isVerified: false };
+    case "unavailable":
+      return { label: "UNAVAILABLE", tone: "neutral", isVerified: false };
+    case "permissionDenied":
+      return { label: "ACCESS DENIED", tone: "danger", isVerified: false };
+    case "queryFailed":
+    default:
+      return { label: "QUERY FAILED", tone: "danger", isVerified: false };
+  }
 }

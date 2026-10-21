@@ -1,5 +1,11 @@
 import React, { useState } from "react";
-import { ConnectionState, ServerInfo, TunnelStatusReport } from "../types/vpn";
+import {
+  ConnectionState,
+  ServerInfo,
+  TunnelOperationResult,
+  TunnelStatusReport,
+  TunnelVerificationReport,
+} from "../types/vpn";
 
 interface DiagnosticsModalProps {
   isOpen: boolean;
@@ -11,6 +17,8 @@ interface DiagnosticsModalProps {
   nativeReport?: TunnelStatusReport | null;
   nativeError?: string | null;
   lastChecked?: Date | null;
+  lastOperation?: TunnelOperationResult | null;
+  verificationReport?: TunnelVerificationReport | null;
 }
 
 export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
@@ -23,6 +31,8 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
   nativeReport,
   nativeError,
   lastChecked,
+  lastOperation,
+  verificationReport,
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -52,19 +62,36 @@ TIMESTAMP          : ${new Date().toISOString()}
 APP VERSION        : 0.1.0
 APPLICATION ID     : com.flux.vpn
 PLATFORM           : Windows Desktop (x86_64)
-ACTIVE SESSION     : ${state.toUpperCase()} (MOCK SIMULATION)
+ACTIVE SESSION     : ${state.toUpperCase()}
 TARGET RELAY       : ${selectedServer.name.toUpperCase()} (${selectedServer.location.toUpperCase()})
 ENDPOINT           : ${selectedServer.endpoint}
 MEASURED PING      : ${selectedServer.pingMs} MS
 SESSION ERROR      : ${errorCode || "NONE"}
 STATUS MESSAGE     : ${errorMessage || "NORMAL OPERATIONAL PARAMETERS"}
 ------------------------------------------------
-WINDOWS SCM OBSERVER (NATIVE READ-ONLY):
+WINDOWS SCM SERVICE:
 TARGET TUNNEL      : flux
 SERVICE NAME       : WireGuardTunnel$flux
 SERVICE STATUS     : ${formatNativeStatus()}
 LAST SCM QUERY     : ${lastChecked ? lastChecked.toISOString() : "PENDING"}
-SECURITY AUDIT     : READ-ONLY (No service mutations permitted)
+LAST OPERATION     : ${
+  lastOperation
+    ? `${lastOperation.success ? "SUCCESS" : "FAILED"}: ${lastOperation.message} [Code: ${
+        lastOperation.errorCode || "NONE"
+      }]`
+    : "NONE RECORDED"
+}
+------------------------------------------------
+DATA PLANE VERIFICATION (WIREGUARD UAPI):
+DATA PLANE STATUS  : ${verificationReport ? verificationReport.state.toUpperCase() : "CHECKING..."}
+LAST HANDSHAKE     : ${
+  verificationReport?.telemetry?.handshakeAgeSeconds != null
+    ? `${verificationReport.telemetry.handshakeAgeSeconds} SECONDS AGO`
+    : "NO VERIFIED HANDSHAKE"
+}
+MEASURED RX BYTES  : ${verificationReport?.telemetry?.rxBytes ?? 0}
+MEASURED TX BYTES  : ${verificationReport?.telemetry?.txBytes ?? 0}
+VERIFY MESSAGE     : ${verificationReport?.errorMessage || "NORMAL"}
 ================================================
 SECURITY & PRIVACY VERIFICATION:
 - Cryptographic private keys: SCRUBBED / LOCAL ONLY

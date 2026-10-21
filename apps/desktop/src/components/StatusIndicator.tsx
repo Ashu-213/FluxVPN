@@ -1,17 +1,19 @@
 import React from "react";
-import { ConnectionState, FormattedServiceState } from "../types/vpn";
+import { ConnectionState, FormattedServiceState, FormattedVerificationState } from "../types/vpn";
 
 interface StatusIndicatorProps {
   state: ConnectionState;
   title: string;
   subtitle: string;
   nativeServiceState?: FormattedServiceState;
+  verificationState?: FormattedVerificationState;
 }
 
 export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   state,
   subtitle,
   nativeServiceState,
+  verificationState,
 }) => {
   // Bold, commanding uppercase state title
   const getStateTitle = () => {
@@ -68,9 +70,8 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
     }
   };
 
-  const getServiceToneSquare = () => {
-    if (!nativeServiceState) return "bg-[#7D7D7D]";
-    switch (nativeServiceState.tone) {
+  const getServiceToneSquare = (tone: string) => {
+    switch (tone) {
       case "positive":
         return "bg-[#10B981]";
       case "warning":
@@ -85,7 +86,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
 
   return (
     <div className="flex flex-col items-center text-center px-4 pt-2 pb-1">
-      {/* State Badges: Session & Native Service */}
+      {/* State Badges: Session, Service, Data Plane */}
       <div className="flex flex-wrap items-center justify-center gap-2 mb-4">
         <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#181818] border border-[#202020]">
           <span className={`w-1.5 h-1.5 ${getIndicatorSquare()}`} />
@@ -96,9 +97,18 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
 
         {nativeServiceState && (
           <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#181818] border border-[#202020]">
-            <span className={`w-1.5 h-1.5 ${getServiceToneSquare()}`} />
+            <span className={`w-1.5 h-1.5 ${getServiceToneSquare(nativeServiceState.tone)}`} />
             <span className="text-[10px] font-mono tracking-[0.2em] uppercase text-[#7D7D7D]">
               SERVICE · {nativeServiceState.label}
+            </span>
+          </div>
+        )}
+
+        {verificationState && (
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#181818] border border-[#202020]">
+            <span className={`w-1.5 h-1.5 ${getServiceToneSquare(verificationState.tone)}`} />
+            <span className="text-[10px] font-mono tracking-[0.2em] uppercase text-[#7D7D7D]">
+              DATA PLANE · {verificationState.label}
             </span>
           </div>
         )}

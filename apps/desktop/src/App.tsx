@@ -11,6 +11,17 @@ import { useNativeTunnel } from "./state/useNativeTunnel";
 
 export const App: React.FC = () => {
   const {
+    report: nativeReport,
+    formattedState,
+    verificationReport,
+    formattedVerification,
+    telemetry,
+    queryError,
+    lastChecked,
+    refresh,
+  } = useNativeTunnel();
+
+  const {
     state,
     title,
     subtitle,
@@ -20,16 +31,10 @@ export const App: React.FC = () => {
     metrics,
     errorCode,
     errorMessage,
+    lastOperation,
     toggleConnection,
     simulateState,
-  } = useVpn();
-
-  const {
-    report: nativeReport,
-    formattedState,
-    queryError,
-    lastChecked,
-  } = useNativeTunnel();
+  } = useVpn({ onServiceAction: refresh });
 
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
 
@@ -38,7 +43,7 @@ export const App: React.FC = () => {
       {/* Minimal Top Header */}
       <Header onOpenDiagnostics={() => setIsDiagnosticsOpen(true)} />
 
-      {/* Live Windows Service Observer Bar */}
+      {/* Live Windows Service & Verification Observer Bar */}
       <div className="bg-[#181818] border-b border-[#202020] px-4 py-1.5 flex items-center justify-between text-[9px] font-mono tracking-wider">
         <div className="flex items-center gap-2">
           <span className="text-[#7D7D7D] uppercase">WIN SERVICE:</span>
@@ -58,8 +63,23 @@ export const App: React.FC = () => {
             {formattedState.label}
           </span>
         </div>
-        <div className="hidden sm:flex items-center gap-2 text-[#7D7D7D]">
-          <span>OBSERVER: READ-ONLY</span>
+        <div className="hidden sm:flex items-center gap-3 text-[#7D7D7D]">
+          <div className="flex items-center gap-1.5">
+            <span className="uppercase">DATA PLANE:</span>
+            <span
+              className={`px-1.5 py-0.5 border uppercase font-bold text-[9px] ${
+                formattedVerification.tone === "positive"
+                  ? "text-[#10B981] bg-[#10B981]/10 border-[#10B981]/30"
+                  : formattedVerification.tone === "warning"
+                  ? "text-[#FFCE3E] bg-[#FFCE3E]/10 border-[#FFCE3E]/30"
+                  : formattedVerification.tone === "danger"
+                  ? "text-[#EF4444] bg-[#EF4444]/10 border-[#EF4444]/30"
+                  : "text-[#7D7D7D] bg-[#202020] border-[#2A2A2A]"
+              }`}
+            >
+              {formattedVerification.label}
+            </span>
+          </div>
           <span className="w-1 h-1 bg-[#FFC000] inline-block rounded-none animate-pulse" />
         </div>
       </div>
@@ -73,6 +93,7 @@ export const App: React.FC = () => {
             title={title}
             subtitle={subtitle}
             nativeServiceState={formattedState}
+            verificationState={formattedVerification}
           />
 
           {/* Primary Action Button */}
@@ -89,8 +110,10 @@ export const App: React.FC = () => {
             connectionState={state}
           />
 
-          {/* Live Session Metrics (Displayed when Connected) */}
-          {state === "connected" && <MetricsBar metrics={metrics} />}
+          {/* Live Session Metrics (Displayed when Connected or Telemetry Available) */}
+          {(state === "connected" || telemetry != null) && (
+            <MetricsBar metrics={metrics} telemetry={telemetry} />
+          )}
         </div>
 
         {/* Developer State Testing Panel (Tucked at bottom) */}
@@ -111,6 +134,8 @@ export const App: React.FC = () => {
         nativeReport={nativeReport}
         nativeError={queryError}
         lastChecked={lastChecked}
+        lastOperation={lastOperation}
+        verificationReport={verificationReport}
       />
     </div>
   );

@@ -1,14 +1,19 @@
-use super::{TunnelServiceState, TunnelStatusReport, construct_service_name, validate_tunnel_name};
+use super::{
+    TunnelOperationResult, TunnelServiceState, TunnelStatusReport, construct_service_name,
+    validate_tunnel_name,
+};
 use std::mem::zeroed;
 use std::ptr::null;
 use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_SERVICE_DOES_NOT_EXIST, GetLastError,
+    ERROR_ACCESS_DENIED, ERROR_SERVICE_ALREADY_RUNNING, ERROR_SERVICE_DOES_NOT_EXIST,
+    ERROR_SERVICE_NOT_ACTIVE, GetLastError,
 };
 use windows_sys::Win32::System::Services::{
-    CloseServiceHandle, OpenSCManagerW, OpenServiceW, QueryServiceStatusEx, SC_HANDLE,
-    SC_MANAGER_CONNECT, SC_STATUS_PROCESS_INFO, SERVICE_CONTINUE_PENDING, SERVICE_PAUSE_PENDING,
-    SERVICE_PAUSED, SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_START_PENDING,
-    SERVICE_STATUS_PROCESS, SERVICE_STOP_PENDING, SERVICE_STOPPED,
+    CloseServiceHandle, ControlService, OpenSCManagerW, OpenServiceW, QueryServiceStatusEx,
+    SC_HANDLE, SC_MANAGER_CONNECT, SC_STATUS_PROCESS_INFO, SERVICE_CONTINUE_PENDING,
+    SERVICE_CONTROL_STOP, SERVICE_PAUSE_PENDING, SERVICE_PAUSED, SERVICE_QUERY_STATUS,
+    SERVICE_RUNNING, SERVICE_START, SERVICE_START_PENDING, SERVICE_STATUS, SERVICE_STATUS_PROCESS,
+    SERVICE_STOP, SERVICE_STOP_PENDING, SERVICE_STOPPED, StartServiceW,
 };
 
 /// RAII wrapper ensuring Service Control Manager handles are closed cleanly on all exit paths.
@@ -131,6 +136,327 @@ pub fn query_tunnel_service_status(tunnel_name: &str) -> Result<TunnelStatusRepo
     }
 }
 
+/// Native start operation for a WireGuard tunnel service via Windows SCM APIs.
+/// Enforces strict validation, handles missing service and permission errors explicitly,
+/// and reports structured outcome without throwing untyped crashes.
+pub fn start_tunnel_service(tunnel_name: &str) -> Result<TunnelOperationResult, String> {
+    let valid_tunnel_name = validate_tunnel_name(tunnel_name)?;
+    let service_name = construct_service_name(valid_tunnel_name);
+    let wide_service_name = to_wide_null(&service_name);
+
+    unsafe {
+        // 1. Open SCM database with connect permission
+        let scm_raw = OpenSCManagerW(null(), null(), SC_MANAGER_CONNECT);
+        if scm_raw.is_null() {
+            let err = GetLastError();
+            let (code, msg) = if err == ERROR_ACCESS_DENIED {
+                (
+                    "ACCESS_DENIED",
+                    "Access denied opening Windows Service Control Manager.",
+                )
+            } else {
+                (
+                    "SYSTEM_ERROR",
+                    "Failed to open Windows Service Control Manager.",
+                )
+            };
+            return Ok(TunnelOperationResult {
+                success: false,
+                tunnel_name: valid_tunnel_name.to_string(),
+                service_name,
+                state: if err == ERROR_ACCESS_DENIED {
+                    TunnelServiceState::AccessDenied
+                } else {
+                    TunnelServiceState::Unknown(format!("SCMOpenFailed({})", err))
+                },
+                error_code: Some(code.into()),
+                message: format!("{} (error code {})", msg, err),
+            });
+        }
+        let _scm_guard = ServiceHandle(scm_raw);
+
+        // 2. Open the specific service with SERVICE_START | SERVICE_QUERY_STATUS permissions
+        let service_raw = OpenServiceW(
+            scm_raw,
+            wide_service_name.as_ptr(),
+            SERVICE_START | SERVICE_QUERY_STATUS,
+        );
+
+        if service_raw.is_null() {
+            let err = GetLastError();
+            let (state, code, msg) = match err {
+                ERROR_SERVICE_DOES_NOT_EXIST => (
+                    TunnelServiceState::NotInstalled,
+                    "SERVICE_NOT_INSTALLED",
+                    format!(
+                        "WireGuard tunnel service '{}' is not installed in Windows Service Control Manager.",
+                        service_name
+                    ),
+                ),
+                ERROR_ACCESS_DENIED => (
+                    TunnelServiceState::AccessDenied,
+                    "ACCESS_DENIED",
+                    format!(
+                        "Access denied opening service '{}' with start permissions. Administrator privileges are required.",
+                        service_name
+                    ),
+                ),
+                other => (
+                    TunnelServiceState::Unknown(format!("OpenServiceFailed({})", other)),
+                    "SYSTEM_ERROR",
+                    format!(
+                        "Failed to open service '{}' (error code {})",
+                        service_name, other
+                    ),
+                ),
+            };
+
+            return Ok(TunnelOperationResult {
+                success: false,
+                tunnel_name: valid_tunnel_name.to_string(),
+                service_name,
+                state,
+                error_code: Some(code.into()),
+                message: msg,
+            });
+        }
+        let _service_guard = ServiceHandle(service_raw);
+
+        // 3. Query current status to prevent redundant start attempts
+        let mut ssp: SERVICE_STATUS_PROCESS = zeroed();
+        let mut bytes_needed: u32 = 0;
+        let query_success = QueryServiceStatusEx(
+            service_raw,
+            SC_STATUS_PROCESS_INFO,
+            &mut ssp as *mut _ as *mut u8,
+            std::mem::size_of::<SERVICE_STATUS_PROCESS>() as u32,
+            &mut bytes_needed,
+        );
+
+        if query_success != 0 {
+            if ssp.dwCurrentState == SERVICE_RUNNING {
+                return Ok(TunnelOperationResult {
+                    success: true,
+                    tunnel_name: valid_tunnel_name.to_string(),
+                    service_name,
+                    state: TunnelServiceState::Running,
+                    error_code: None,
+                    message: "WireGuard tunnel service is already running.".into(),
+                });
+            } else if ssp.dwCurrentState == SERVICE_START_PENDING {
+                return Ok(TunnelOperationResult {
+                    success: true,
+                    tunnel_name: valid_tunnel_name.to_string(),
+                    service_name,
+                    state: TunnelServiceState::StartPending,
+                    error_code: None,
+                    message: "WireGuard tunnel service start is already pending.".into(),
+                });
+            }
+        }
+
+        // 4. Request service start
+        let start_res = StartServiceW(service_raw, 0, null());
+        if start_res == 0 {
+            let err = GetLastError();
+            let (state, code, msg) = match err {
+                ERROR_SERVICE_ALREADY_RUNNING => (
+                    TunnelServiceState::Running,
+                    None,
+                    "WireGuard tunnel service is already running.".to_string(),
+                ),
+                ERROR_ACCESS_DENIED => (
+                    TunnelServiceState::AccessDenied,
+                    Some("ACCESS_DENIED".to_string()),
+                    format!(
+                        "Access denied starting service '{}'. Administrator privileges are required.",
+                        service_name
+                    ),
+                ),
+                other => (
+                    TunnelServiceState::Unknown(format!("StartServiceFailed({})", other)),
+                    Some("START_FAILED".to_string()),
+                    format!(
+                        "Failed to start service '{}' (error code {})",
+                        service_name, other
+                    ),
+                ),
+            };
+
+            let is_success = code.is_none();
+            return Ok(TunnelOperationResult {
+                success: is_success,
+                tunnel_name: valid_tunnel_name.to_string(),
+                service_name,
+                state,
+                error_code: code,
+                message: msg,
+            });
+        }
+
+        Ok(TunnelOperationResult {
+            success: true,
+            tunnel_name: valid_tunnel_name.to_string(),
+            service_name,
+            state: TunnelServiceState::StartPending,
+            error_code: None,
+            message: "WireGuard tunnel service start command dispatched successfully.".into(),
+        })
+    }
+}
+
+/// Native stop operation for a WireGuard tunnel service via Windows SCM APIs.
+/// Enforces strict validation, handles missing service and permission errors explicitly,
+/// and reports structured outcome.
+pub fn stop_tunnel_service(tunnel_name: &str) -> Result<TunnelOperationResult, String> {
+    let valid_tunnel_name = validate_tunnel_name(tunnel_name)?;
+    let service_name = construct_service_name(valid_tunnel_name);
+    let wide_service_name = to_wide_null(&service_name);
+
+    unsafe {
+        // 1. Open SCM database with connect permission
+        let scm_raw = OpenSCManagerW(null(), null(), SC_MANAGER_CONNECT);
+        if scm_raw.is_null() {
+            let err = GetLastError();
+            return Ok(TunnelOperationResult {
+                success: false,
+                tunnel_name: valid_tunnel_name.to_string(),
+                service_name,
+                state: if err == ERROR_ACCESS_DENIED {
+                    TunnelServiceState::AccessDenied
+                } else {
+                    TunnelServiceState::Unknown(format!("SCMOpenFailed({})", err))
+                },
+                error_code: Some("ACCESS_DENIED".into()),
+                message: format!(
+                    "Failed to open Windows Service Control Manager (error code {})",
+                    err
+                ),
+            });
+        }
+        let _scm_guard = ServiceHandle(scm_raw);
+
+        // 2. Open service with SERVICE_STOP | SERVICE_QUERY_STATUS permissions
+        let service_raw = OpenServiceW(
+            scm_raw,
+            wide_service_name.as_ptr(),
+            SERVICE_STOP | SERVICE_QUERY_STATUS,
+        );
+
+        if service_raw.is_null() {
+            let err = GetLastError();
+            let (state, code, msg) = match err {
+                ERROR_SERVICE_DOES_NOT_EXIST => (
+                    TunnelServiceState::NotInstalled,
+                    "SERVICE_NOT_INSTALLED",
+                    format!(
+                        "WireGuard tunnel service '{}' is not installed in Windows Service Control Manager.",
+                        service_name
+                    ),
+                ),
+                ERROR_ACCESS_DENIED => (
+                    TunnelServiceState::AccessDenied,
+                    "ACCESS_DENIED",
+                    format!(
+                        "Access denied opening service '{}' with stop permissions. Administrator privileges are required.",
+                        service_name
+                    ),
+                ),
+                other => (
+                    TunnelServiceState::Unknown(format!("OpenServiceFailed({})", other)),
+                    "SYSTEM_ERROR",
+                    format!(
+                        "Failed to open service '{}' (error code {})",
+                        service_name, other
+                    ),
+                ),
+            };
+
+            return Ok(TunnelOperationResult {
+                success: false,
+                tunnel_name: valid_tunnel_name.to_string(),
+                service_name,
+                state,
+                error_code: Some(code.into()),
+                message: msg,
+            });
+        }
+        let _service_guard = ServiceHandle(service_raw);
+
+        // 3. Query current status to check if already stopped
+        let mut ssp: SERVICE_STATUS_PROCESS = zeroed();
+        let mut bytes_needed: u32 = 0;
+        let query_success = QueryServiceStatusEx(
+            service_raw,
+            SC_STATUS_PROCESS_INFO,
+            &mut ssp as *mut _ as *mut u8,
+            std::mem::size_of::<SERVICE_STATUS_PROCESS>() as u32,
+            &mut bytes_needed,
+        );
+
+        if query_success != 0 && ssp.dwCurrentState == SERVICE_STOPPED {
+            return Ok(TunnelOperationResult {
+                success: true,
+                tunnel_name: valid_tunnel_name.to_string(),
+                service_name,
+                state: TunnelServiceState::Stopped,
+                error_code: None,
+                message: "WireGuard tunnel service is already stopped.".into(),
+            });
+        }
+
+        // 4. Request service stop
+        let mut status: SERVICE_STATUS = zeroed();
+        let stop_res = ControlService(service_raw, SERVICE_CONTROL_STOP, &mut status);
+
+        if stop_res == 0 {
+            let err = GetLastError();
+            let (state, code, msg) = match err {
+                ERROR_SERVICE_NOT_ACTIVE => (
+                    TunnelServiceState::Stopped,
+                    None,
+                    "WireGuard tunnel service is not active.".to_string(),
+                ),
+                ERROR_ACCESS_DENIED => (
+                    TunnelServiceState::AccessDenied,
+                    Some("ACCESS_DENIED".to_string()),
+                    format!(
+                        "Access denied stopping service '{}'. Administrator privileges are required.",
+                        service_name
+                    ),
+                ),
+                other => (
+                    TunnelServiceState::Unknown(format!("StopServiceFailed({})", other)),
+                    Some("STOP_FAILED".to_string()),
+                    format!(
+                        "Failed to stop service '{}' (error code {})",
+                        service_name, other
+                    ),
+                ),
+            };
+
+            let is_success = code.is_none();
+            return Ok(TunnelOperationResult {
+                success: is_success,
+                tunnel_name: valid_tunnel_name.to_string(),
+                service_name,
+                state,
+                error_code: code,
+                message: msg,
+            });
+        }
+
+        Ok(TunnelOperationResult {
+            success: true,
+            tunnel_name: valid_tunnel_name.to_string(),
+            service_name,
+            state: TunnelServiceState::StopPending,
+            error_code: None,
+            message: "WireGuard tunnel service stop command dispatched successfully.".into(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +502,25 @@ mod tests {
         assert_eq!(report.service_name, "WireGuardTunnel$flux");
         // On a dev machine where the tunnel is not installed, it should be NotInstalled
         assert_eq!(report.state, TunnelServiceState::NotInstalled);
+    }
+
+    #[test]
+    fn test_start_non_existent_tunnel() {
+        let result = start_tunnel_service("flux").expect("start invocation must succeed");
+        assert_eq!(result.tunnel_name, "flux");
+        assert_eq!(result.service_name, "WireGuardTunnel$flux");
+        assert!(!result.success);
+        assert_eq!(result.state, TunnelServiceState::NotInstalled);
+        assert_eq!(result.error_code, Some("SERVICE_NOT_INSTALLED".into()));
+    }
+
+    #[test]
+    fn test_stop_non_existent_tunnel() {
+        let result = stop_tunnel_service("flux").expect("stop invocation must succeed");
+        assert_eq!(result.tunnel_name, "flux");
+        assert_eq!(result.service_name, "WireGuardTunnel$flux");
+        assert!(!result.success);
+        assert_eq!(result.state, TunnelServiceState::NotInstalled);
+        assert_eq!(result.error_code, Some("SERVICE_NOT_INSTALLED".into()));
     }
 }
