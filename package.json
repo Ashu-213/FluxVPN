@@ -8,7 +8,11 @@
   ],
   "scripts": {
     "dev:desktop": "npm run dev --workspace=flux-desktop",
+    "dev:tauri": "npm run tauri --workspace=flux-desktop -- dev",
     "build:desktop": "npm run build --workspace=flux-desktop",
+    "test:desktop": "npm run test --workspace=flux-desktop",
+    "build": "npm run build:desktop",
+    "test": "npm run test:desktop",
     "tauri": "npm run tauri --workspace=flux-desktop --"
   }
 }

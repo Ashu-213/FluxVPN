@@ -9,12 +9,17 @@ interface ConnectButtonProps {
 export const ConnectButton: React.FC<ConnectButtonProps> = ({ state, onToggle }) => {
   const isConnected = state === "connected";
   const isBusy = state === "preparing" || state === "connecting" || state === "disconnecting";
+  const isReconnecting = state === "reconnecting";
   const isError = state === "error";
 
   const getButtonStyles = () => {
     if (isConnected) {
       // Disconnect state: Sophisticated dark iron with sharp white/danger border
       return "bg-[#181818] hover:bg-[#202020] text-[#FFFFFF] hover:text-[#EF4444] border border-[#202020] hover:border-[#EF4444]";
+    }
+    if (isReconnecting) {
+      // Reconnecting state: Interactive warning amber button allowing cancellation
+      return "bg-[#181818] hover:bg-[#202020] text-[#FFCE3E] hover:text-[#EF4444] border border-[#FFCE3E]/40 hover:border-[#EF4444]";
     }
     if (isBusy) {
       // Busy state: Muted gold with steady pulse
@@ -37,7 +42,7 @@ export const ConnectButton: React.FC<ConnectButtonProps> = ({ state, onToggle })
       case "connecting":
         return "CONNECTING...";
       case "reconnecting":
-        return "RECONNECTING...";
+        return "CANCEL RECONNECT";
       case "disconnecting":
         return "DISCONNECTING...";
       case "error":
@@ -59,6 +64,8 @@ export const ConnectButton: React.FC<ConnectButtonProps> = ({ state, onToggle })
         {/* Minimal geometric indicator */}
         {isBusy ? (
           <span className="w-2.5 h-2.5 border-2 border-black border-t-transparent animate-spin" />
+        ) : isReconnecting ? (
+          <span className="w-2.5 h-2.5 border-2 border-[#FFCE3E] border-t-transparent animate-spin" />
         ) : isConnected ? (
           <span className="w-2 h-2 bg-[#EF4444]" />
         ) : (
@@ -70,7 +77,7 @@ export const ConnectButton: React.FC<ConnectButtonProps> = ({ state, onToggle })
 
       {/* Subtle context note */}
       <span className="text-[10px] font-mono tracking-widest uppercase text-[#7D7D7D] mt-3">
-        {isConnected ? "TUNNEL SERVICE ACTIVE" : "WIREGUARD TUNNEL"}
+        {isConnected ? "TUNNEL SERVICE ACTIVE" : isReconnecting ? "RECOVERY IN PROGRESS" : "WIREGUARD TUNNEL"}
       </span>
     </div>
   );

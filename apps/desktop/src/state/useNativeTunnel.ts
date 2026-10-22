@@ -9,6 +9,7 @@ import {
   formatVerificationState,
   TunnelTelemetry,
 } from "../types/vpn";
+import { isTauriEnvironment, BROWSER_PREVIEW_DIAGNOSTIC_MSG } from "./environment.ts";
 
 const FIXED_FLUX_TUNNEL_NAME = "flux";
 const POLL_INTERVAL_MS = 3000;
@@ -38,6 +39,16 @@ export function useNativeTunnel(): UseNativeTunnelResult {
   const isMountedRef = useRef<boolean>(true);
 
   const fetchStatus = useCallback(async (force = false) => {
+    // If not running inside the native Tauri environment, do not invoke native IPC commands
+    if (!isTauriEnvironment()) {
+      if (isMountedRef.current) {
+        setIsLoading(false);
+        setQueryError(BROWSER_PREVIEW_DIAGNOSTIC_MSG);
+        setLastChecked(new Date());
+      }
+      return;
+    }
+
     // Prevent overlapping queries unless manually forced by a lifecycle action
     if (isQueryingRef.current && !force) return;
 
@@ -102,8 +113,17 @@ export function useNativeTunnel(): UseNativeTunnelResult {
     };
   }, [fetchStatus]);
 
+  const isDesktop = isTauriEnvironment();
+
   // Derived formatted state for service
-  const formattedState: FormattedServiceState = report
+  const formattedState: FormattedServiceState = !isDesktop
+    ? {
+        label: "WEB PREVIEW",
+        tone: "warning",
+        isInstalled: false,
+        isRunning: false,
+      }
+    : report
     ? formatNativeServiceState(report.state)
     : queryError
     ? {
@@ -120,7 +140,13 @@ export function useNativeTunnel(): UseNativeTunnelResult {
       };
 
   // Derived formatted state for handshake / traffic verification
-  const formattedVerification: FormattedVerificationState = verificationReport
+  const formattedVerification: FormattedVerificationState = !isDesktop
+    ? {
+        label: "STANDBY (WEB)",
+        tone: "neutral",
+        isVerified: false,
+      }
+    : verificationReport
     ? formatVerificationState(verificationReport.state)
     : {
         label: "CHECKING...",

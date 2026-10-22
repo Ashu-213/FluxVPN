@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "FLUX VPN",
         "width": 440,
         "height": 700,

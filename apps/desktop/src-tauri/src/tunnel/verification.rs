@@ -62,15 +62,17 @@ pub fn parse_uapi_peer_stats(uapi_output: &str) -> RawPeerStats {
         let trimmed = line.trim();
         if let Some(val) = trimmed.strip_prefix("last_handshake_time_sec=") {
             if let Ok(sec) = val.parse::<u64>() {
-                stats.last_handshake_epoch_sec = sec;
+                if sec > stats.last_handshake_epoch_sec {
+                    stats.last_handshake_epoch_sec = sec;
+                }
             }
         } else if let Some(val) = trimmed.strip_prefix("rx_bytes=") {
             if let Ok(bytes) = val.parse::<u64>() {
-                stats.rx_bytes = bytes;
+                stats.rx_bytes = stats.rx_bytes.saturating_add(bytes);
             }
         } else if let Some(val) = trimmed.strip_prefix("tx_bytes=") {
             if let Ok(bytes) = val.parse::<u64>() {
-                stats.tx_bytes = bytes;
+                stats.tx_bytes = stats.tx_bytes.saturating_add(bytes);
             }
         }
     }
@@ -95,9 +97,17 @@ pub fn evaluate_verification_state(
     };
 
     let handshake_epoch = stats.last_handshake_epoch_sec;
-    let (is_fresh, age_seconds) = if handshake_epoch > 0 && current_epoch_sec >= handshake_epoch {
-        let age = current_epoch_sec - handshake_epoch;
-        (age <= HANDSHAKE_FRESHNESS_LIMIT_SECONDS, Some(age))
+    let (is_fresh, age_seconds) = if handshake_epoch > 0 {
+        if current_epoch_sec >= handshake_epoch {
+            let age = current_epoch_sec - handshake_epoch;
+            (age <= HANDSHAKE_FRESHNESS_LIMIT_SECONDS, Some(age))
+        } else if handshake_epoch - current_epoch_sec <= 30 {
+            // Minor virtualization or container/host clock skew within 30 seconds
+            (true, Some(0))
+        } else {
+            // Implausibly far future timestamp (>30s)
+            (false, None)
+        }
     } else {
         (false, None)
     };
@@ -254,6 +264,139 @@ errno=0
         let tel = telemetry.expect("telemetry present");
         assert_eq!(tel.handshake_age_seconds, Some(30));
         assert_eq!(tel.rx_bytes, 0);
+    }
+
+    #[test]
+    fn test_evaluate_handshake_absence() {
+        let stats = RawPeerStats {
+            last_handshake_epoch_sec: 0,
+            rx_bytes: 0,
+            tx_bytes: 148,
+        };
+        let now = 1700000100;
+        let (state, telemetry) = evaluate_verification_state(true, Some(&stats), now);
+        assert_eq!(state, VerificationState::NoHandshake);
+        let tel = telemetry.expect("telemetry present");
+        assert_eq!(tel.last_handshake_epoch_sec, None);
+        assert_eq!(tel.handshake_age_seconds, None);
+        assert_eq!(tel.rx_bytes, 0);
+        assert_eq!(tel.tx_bytes, 148);
+    }
+
+    #[test]
+    fn test_evaluate_stale_handshake_large_gap() {
+        let stats = RawPeerStats {
+            last_handshake_epoch_sec: 1700000000,
+            rx_bytes: 50000,
+            tx_bytes: 60000,
+        };
+        // 3600 seconds (1 hour) later
+        let now = 1700000000 + 3600;
+        let (state, telemetry) = evaluate_verification_state(true, Some(&stats), now);
+        assert_eq!(state, VerificationState::NoHandshake);
+        let tel = telemetry.expect("telemetry present");
+        assert_eq!(tel.handshake_age_seconds, Some(3600));
+        assert_eq!(tel.rx_bytes, 50000);
+        assert_eq!(tel.tx_bytes, 60000);
+    }
+
+    #[test]
+    fn test_evaluate_unidirectional_tx_only() {
+        let stats = RawPeerStats {
+            last_handshake_epoch_sec: 1700000000,
+            rx_bytes: 0,
+            tx_bytes: 2048,
+        };
+        let now = 1700000000 + 15;
+        let (state, telemetry) = evaluate_verification_state(true, Some(&stats), now);
+        assert_eq!(state, VerificationState::HandshakeVerified);
+        let tel = telemetry.expect("telemetry present");
+        assert_eq!(tel.handshake_age_seconds, Some(15));
+        assert_eq!(tel.rx_bytes, 0);
+        assert_eq!(tel.tx_bytes, 2048);
+    }
+
+    #[test]
+    fn test_evaluate_unidirectional_rx_only() {
+        let stats = RawPeerStats {
+            last_handshake_epoch_sec: 1700000000,
+            rx_bytes: 4096,
+            tx_bytes: 0,
+        };
+        let now = 1700000000 + 20;
+        let (state, telemetry) = evaluate_verification_state(true, Some(&stats), now);
+        assert_eq!(state, VerificationState::HandshakeVerified);
+        let tel = telemetry.expect("telemetry present");
+        assert_eq!(tel.handshake_age_seconds, Some(20));
+        assert_eq!(tel.rx_bytes, 4096);
+        assert_eq!(tel.tx_bytes, 0);
+    }
+
+    #[test]
+    fn test_evaluate_clock_skew_tolerance() {
+        let stats = RawPeerStats {
+            last_handshake_epoch_sec: 1700000005, // 5s in the future
+            rx_bytes: 1228,
+            tx_bytes: 1044,
+        };
+        let now = 1700000000;
+        let (state, telemetry) = evaluate_verification_state(true, Some(&stats), now);
+        assert_eq!(state, VerificationState::TrafficObserved);
+        let tel = telemetry.expect("telemetry present");
+        assert_eq!(tel.handshake_age_seconds, Some(0)); // Tolerated jitter reported as fresh (0s age)
+        assert_eq!(tel.rx_bytes, 1228);
+        assert_eq!(tel.tx_bytes, 1044);
+    }
+
+    #[test]
+    fn test_evaluate_extreme_future_timestamp() {
+        let stats = RawPeerStats {
+            last_handshake_epoch_sec: 1700000100, // 100s in the future (>30s)
+            rx_bytes: 1000,
+            tx_bytes: 2000,
+        };
+        let now = 1700000000;
+        let (state, telemetry) = evaluate_verification_state(true, Some(&stats), now);
+        assert_eq!(state, VerificationState::NoHandshake);
+        let tel = telemetry.expect("telemetry present");
+        assert_eq!(tel.handshake_age_seconds, None);
+    }
+
+    #[test]
+    fn test_evaluate_service_stopped_with_stats() {
+        let stats = RawPeerStats {
+            last_handshake_epoch_sec: 1700000000,
+            rx_bytes: 1048576,
+            tx_bytes: 2097152,
+        };
+        let now = 1700000010;
+        // Even if stats exist, if service is stopped, result must be ServiceStopped and telemetry None
+        let (state, telemetry) = evaluate_verification_state(false, Some(&stats), now);
+        assert_eq!(state, VerificationState::ServiceStopped);
+        assert!(telemetry.is_none());
+    }
+
+    #[test]
+    fn test_parse_uapi_multi_peer_accumulation() {
+        let uapi = r#"
+public_key=peer_pubkey_11111
+endpoint=198.51.100.1:51820
+last_handshake_time_sec=1700000050
+rx_bytes=512
+tx_bytes=256
+public_key=peer_pubkey_22222
+endpoint=198.51.100.2:51820
+last_handshake_time_sec=1700000120
+rx_bytes=1024
+tx_bytes=2048
+errno=0
+"#;
+        let stats = parse_uapi_peer_stats(uapi);
+        // Latest handshake is chosen
+        assert_eq!(stats.last_handshake_epoch_sec, 1700000120);
+        // Byte counters are accumulated
+        assert_eq!(stats.rx_bytes, 1536);
+        assert_eq!(stats.tx_bytes, 2304);
     }
 
     #[test]

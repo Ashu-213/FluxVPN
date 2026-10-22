@@ -11,12 +11,16 @@ interface StatusIndicatorProps {
 
 export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   state,
+  title,
   subtitle,
   nativeServiceState,
   verificationState,
 }) => {
-  // Bold, commanding uppercase state title
+  // Truthful uppercase state headline derived from authoritative state and verification evidence
   const getStateTitle = () => {
+    if (title) {
+      return title.toUpperCase();
+    }
     switch (state) {
       case "connected":
         return "CONNECTED";
@@ -39,7 +43,11 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   const getStatusColor = () => {
     switch (state) {
       case "connected":
-        return "text-[#FFC000]";
+        // Distinguish between verified data plane vs pending handshake
+        if (verificationState && !verificationState.isVerified) {
+          return "text-[#FFCE3E]"; // Amber warning when handshake or data plane is unverified
+        }
+        return "text-[#FFC000]"; // Active gold when data plane is verified
       case "preparing":
       case "connecting":
       case "reconnecting":
@@ -56,6 +64,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   const getIndicatorSquare = () => {
     switch (state) {
       case "connected":
+        if (verificationState && !verificationState.isVerified) {
+          return "bg-[#FFCE3E] animate-pulse";
+        }
         return "bg-[#FFC000]";
       case "preparing":
       case "connecting":
